@@ -169,24 +169,41 @@ class GitHubCopilotAuthenticator:
         Note:
             This method does not attempt to refresh or obtain new credentials.
         """
+        # Order of checks:
+        # 1. Valid (non-expired, token exists and is non-empty) API key file
+        # 2. Environment variables for access token
+        # 3. LLM-stored access token (non-empty)
+
+        # Check 1: API Key File
         try:
-            # Check if we have a valid API key
             if self.api_key_file.exists():
                 api_key_info = json.loads(self.api_key_file.read_text())
-                if api_key_info.get("expires_at", 0) > datetime.now().timestamp():
+                # Ensure api_key_info is a dict, token exists and is not empty, and is not expired
+                if isinstance(api_key_info, dict) and \
+                   api_key_info.get("token") and \
+                   isinstance(api_key_info.get("token"), str) and \
+                   api_key_info.get("token").strip() and \
+                   api_key_info.get("expires_at", 0) > datetime.now().timestamp():
                     return True
+        except (FileNotFoundError, json.JSONDecodeError, KeyError, AttributeError, TypeError):
+            # Ignore errors related to API key file processing, proceed to next checks
+            pass
 
-            # Check if we have a valid access token that we can use to get an API key
-            try:
-                access_token = llm.get_key("github_copilot", self.ACCESS_TOKEN_KEY)
-                if access_token:
-                    return True
-            except (TypeError, Exception):
-                pass
+        # Check 2: Environment Variables
+        for env_var in ["GH_COPILOT_TOKEN", "GITHUB_COPILOT_TOKEN"]:
+            env_token = os.environ.get(env_var)
+            if env_token and env_token.strip():
+                return True
 
-            return False
-        except (FileNotFoundError, json.JSONDecodeError, KeyError):
-            return False
+        # Check 3: LLM-stored Access Token
+        try:
+            access_token = llm.get_key("github_copilot", self.ACCESS_TOKEN_KEY)
+            if access_token and isinstance(access_token, str) and access_token.strip():
+                return True
+        except (TypeError, Exception): # Catching broad exception from llm.get_key if it fails
+            pass
+
+        return False
 
     def _get_github_headers(self, access_token: Optional[str] = None) -> dict[str, str]:
         """
