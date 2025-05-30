@@ -1033,14 +1033,31 @@ def register_commands(cli):
 
                 # Save the access token to LLM key storage
                 try:
-                    llm.set_key(
-                        "github_copilot", authenticator.ACCESS_TOKEN_KEY, access_token
-                    )
-                    click.echo(f"Access token: {access_token}")
-                except TypeError:
-                    click.echo(
-                        "Warning: Unable to save token to LLM key storage (incompatible LLM version)"
-                    )
+                    keys_path = llm.user_dir() / "keys.json"
+                    key_name_to_set = authenticator.ACCESS_TOKEN_KEY
+                    
+                    current_keys = {}
+                    if keys_path.exists():
+                        try:
+                            current_keys = json.loads(keys_path.read_text())
+                            if not isinstance(current_keys, dict):
+                                current_keys = authenticator.DEFAULT_KEYS_JSON_CONTENT.copy()
+                        except json.JSONDecodeError:
+                            click.echo(f"Warning: {keys_path} is not valid JSON. Initializing a new one.", err=True)
+                            current_keys = authenticator.DEFAULT_KEYS_JSON_CONTENT.copy()
+                    else:
+                        current_keys = authenticator.DEFAULT_KEYS_JSON_CONTENT.copy()
+
+                    current_keys[key_name_to_set] = access_token
+                    
+                    keys_path.parent.mkdir(parents=True, exist_ok=True)
+                    keys_path.write_text(json.dumps(current_keys, indent=2) + "\n")
+                    if not keys_path.exists(): # Should not happen if write_text is successful
+                         keys_path.chmod(0o600) # Set permissions if file was newly created by write_text
+                    
+                    click.echo(f"Access token saved: {access_token}")
+                except Exception as e:
+                    click.echo(f"Error saving access token to LLM key storage: {str(e)}")
 
             # Get the API key
             api_key_info = authenticator._refresh_api_key()
