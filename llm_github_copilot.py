@@ -145,6 +145,7 @@ class GitHubCopilotAuthenticator:
 
     # Key identifiers for LLM key storage
     ACCESS_TOKEN_KEY = "github_copilot_access_token"
+    DEFAULT_KEYS_JSON_CONTENT = {"// Note": "This file stores secret API credentials. Do not share!"}
 
     def __init__(self) -> None:
         # Token storage paths for API key (still using file for this)
@@ -1214,13 +1215,38 @@ def register_commands(cli):
 
         # Remove access token from LLM key storage
         try:
-            if llm.get_key("github_copilot", authenticator.ACCESS_TOKEN_KEY):
-                llm.delete_key("github_copilot", authenticator.ACCESS_TOKEN_KEY)
+            keys_path = llm.user_dir() / "keys.json"
+            key_name_to_remove = authenticator.ACCESS_TOKEN_KEY
+            
+            key_existed_and_removed = False
+            if keys_path.exists():
+                current_keys = {}
+                try:
+                    current_keys = json.loads(keys_path.read_text())
+                    if not isinstance(current_keys, dict):
+                        # Handle case where keys.json is not a dict (e.g. corrupted)
+                        # or if it's empty and loads as None or other non-dict type
+                        current_keys = {}
+                except json.JSONDecodeError:
+                    # If file is malformed, treat as if key wasn't there or handle error
+                    click.echo(f"Warning: {keys_path} is not valid JSON.", err=True)
+                    current_keys = {} # Or re-raise, or return, depending on desired strictness
+
+                if key_name_to_remove in current_keys:
+                    del current_keys[key_name_to_remove]
+                    # Ensure the // Note comment is preserved if it exists and keys become empty
+                    if not current_keys and "// Note" in getattr(GitHubCopilotAuthenticator, "DEFAULT_KEYS_JSON_CONTENT", {}):
+                         current_keys["// Note"] = GitHubCopilotAuthenticator.DEFAULT_KEYS_JSON_CONTENT["// Note"]
+
+                    keys_path.write_text(json.dumps(current_keys, indent=2) + "\n")
+                    key_existed_and_removed = True
+            
+            if key_existed_and_removed:
                 click.echo("Access token removed from LLM key storage.")
-        except TypeError:
-            click.echo(
-                "Warning: Unable to access LLM key storage (incompatible LLM version)"
-            )
+            # If you want to inform the user that the key was not found, uncomment below:
+            # else:
+            #     click.echo("Access token not found in LLM key storage.")
+
         except Exception as e:
             click.echo(f"Error removing access token: {str(e)}")
 
